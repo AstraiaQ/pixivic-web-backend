@@ -1,5 +1,6 @@
 package dev.cheerfun.pixivic.ratelimit.aop;
 
+import com.google.common.base.Preconditions;
 import dev.cheerfun.pixivic.ratelimit.annotation.RateLimit;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 /**
@@ -31,13 +33,18 @@ public class RateLimitProcessor {
     @Resource(name = "limitRedisTemplate")
     private RedisTemplate<String, Integer> redisTemplate;
 
+    /**
+     * 令牌桶是否存在
+     */
+    private static final AtomicBoolean BUCKET_IS_EXSITS = new AtomicBoolean(false);
+
     @Pointcut(value = "@annotation(dev.cheerfun.pixivic.ratelimit.annotation.RateLimit)")
     public void pointCut() {
     }
 
     @Around(value = "pointCut()")
     public Object handleRateLimiter(ProceedingJoinPoint joinPoint) throws Throwable {
-        Object obj = null;
+        Object obj;
         Signature signature = joinPoint.getSignature();
         MethodSignature methodSignature = (MethodSignature) signature;
         RateLimit annotation = methodSignature.getMethod().getAnnotation(RateLimit.class);
@@ -49,7 +56,16 @@ public class RateLimitProcessor {
         Integer maxLimit = tokenBucket.get(userId);
         if (maxLimit == null) {
             //fixme 这里会有并发问题，俩个服务同时获取一个桶，该桶为空因此默认只取第一个桶
-            tokenBucket.setIfAbsent(userId, 1, sec, TimeUnit.SECONDS);
+            Boolean setResult = tokenBucket.setIfAbsent(userId, 1, sec, TimeUnit.SECONDS);
+            if (Boolean.FALSE.equals(setResult)) {
+                maxLimit = tokenBucket.get(userId);
+                Preconditions.checkNotNull(maxLimit, String.format("userId:%s的令牌个数为空", maxLimit));
+                if (limitNum > maxLimit) {
+                    tokenBucket.increment(userId);
+                } else {
+                    throw new RuntimeException("休息一会再来");
+                }
+            }
             obj = joinPoint.proceed();
         } else if (limitNum > maxLimit) {
             tokenBucket.increment(userId);
