@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class IllustsArtistController {
 
     @GetMapping("/hello")
-    @RateLimit(limitNum = 10)
+    @RateLimit
     public String hello() {
         return "hello";
     }

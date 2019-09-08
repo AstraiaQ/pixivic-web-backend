@@ -13,8 +13,14 @@ import java.lang.annotation.*;
 @Documented
 public @interface RateLimit {
     /**
-     * 默认每秒放进桶中的令牌
+     * 桶中的令牌
      * @return double
      */
-    double limitNum() default 20.0;
+    long limitNum() default 20;
+
+    /**
+     * 限制事件区间内,默认1s 单位(s)
+     * @return
+     */
+    long sec() default 1;
 }

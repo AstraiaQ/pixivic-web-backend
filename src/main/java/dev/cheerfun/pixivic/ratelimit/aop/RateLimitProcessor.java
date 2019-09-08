@@ -1,7 +1,5 @@
 package dev.cheerfun.pixivic.ratelimit.aop;
 
-import com.google.common.collect.Maps;
-import com.google.common.util.concurrent.RateLimiter;
 import dev.cheerfun.pixivic.ratelimit.annotation.RateLimit;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -10,9 +8,12 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Pointcut;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
+import javax.annotation.Resource;
+import java.util.concurrent.TimeUnit;
 
 
 /**
@@ -26,45 +27,36 @@ import java.util.Map;
 @Slf4j
 public class RateLimitProcessor {
 
-    /**
-     * 用来存放不同接口的RateLimiter(key为接口名称，value为RateLimiter)
-     */
-    private Map<String, RateLimiter> map = Maps.newConcurrentMap();
-    private RateLimiter rateLimiter;
+
+    @Resource(name = "limitRedisTemplate")
+    private RedisTemplate<String, Integer> redisTemplate;
 
     @Pointcut(value = "@annotation(dev.cheerfun.pixivic.ratelimit.annotation.RateLimit)")
     public void pointCut() {
     }
 
     @Around(value = "pointCut()")
-    public Object handleRateLimiter(ProceedingJoinPoint joinPoint) {
+    public Object handleRateLimiter(ProceedingJoinPoint joinPoint) throws Throwable {
         Object obj = null;
         Signature signature = joinPoint.getSignature();
         MethodSignature methodSignature = (MethodSignature) signature;
         RateLimit annotation = methodSignature.getMethod().getAnnotation(RateLimit.class);
-        double limitNum = annotation.limitNum();
-        String functionName = methodSignature.getName();
-        if (map.containsKey(functionName)) {
-            rateLimiter = map.get(functionName);
+        long limitNum = annotation.limitNum();
+        long sec = annotation.sec();
+        //TODO userId
+        String userId = "userId";
+        ValueOperations<String, Integer> tokenBucket = redisTemplate.opsForValue();
+        Integer maxLimit = tokenBucket.get(userId);
+        if (maxLimit == null) {
+            //fixme 这里会有并发问题，俩个服务同时获取一个桶，该桶为空因此默认只取第一个桶
+            tokenBucket.setIfAbsent(userId, 1, sec, TimeUnit.SECONDS);
+            obj = joinPoint.proceed();
+        } else if (limitNum > maxLimit) {
+            tokenBucket.increment(userId);
+            obj = joinPoint.proceed();
         } else {
-            //每秒允许多少请求limitNum
-            map.put(functionName, RateLimiter.create(limitNum));
-            rateLimiter = map.get(functionName);
+            throw new RuntimeException("休息一会再来");
         }
-
-        if (rateLimiter.tryAcquire()) {
-            //执行方法
-            try {
-                obj = joinPoint.proceed();
-            } catch (Throwable throwable) {
-                throwable.printStackTrace();
-            }
-        } else {
-            //拒绝了请求（服务降级）
-            //TODO 拒绝后提示
-            //throw new VisitOftenException(HttpStatus.FORBIDDEN.value(), HttpStatus.FORBIDDEN.getReasonPhrase());
-        }
-
         return obj;
     }
 }
