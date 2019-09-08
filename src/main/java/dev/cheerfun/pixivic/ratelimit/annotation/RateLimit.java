@@ -14,13 +14,15 @@ import java.lang.annotation.*;
 public @interface RateLimit {
     /**
      * 桶中的令牌
+     *
      * @return double
      */
     long limitNum() default 20;
 
     /**
      * 限制事件区间内,默认1s 单位(s)
+     *
      * @return
      */
-    long sec() default 1;
+    int sec() default 1;
 }
